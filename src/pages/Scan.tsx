@@ -13,12 +13,14 @@ import {
   FileSearch, 
   Clock,
   Globe,
-  Database,
   Eye,
-  Copy
+  Copy,
+  Info
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "@/hooks/use-toast";
+import { LGPDAnalyzer } from "@/services/LGPDAnalyzer";
+import { ScanResult } from "@/types/scanner";
 
 const Scan = () => {
   const navigate = useNavigate();
@@ -28,7 +30,8 @@ const Scan = () => {
   const [url, setUrl] = useState(initialUrl);
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
-  const [scanResults, setScanResults] = useState<any>(null);
+  const [scanProgressMessage, setScanProgressMessage] = useState("");
+  const [scanResults, setScanResults] = useState<ScanResult | null>(null);
 
   const handleStartScan = async () => {
     if (!url) {
@@ -40,70 +43,47 @@ const Scan = () => {
       return;
     }
 
-    setIsScanning(true);
-    setScanProgress(0);
-    setScanResults(null);
-
-    // Simulate scanning process
-    const steps = [
-      "Conectando ao site...",
-      "Analisando formulários...",
-      "Detectando campos de dados pessoais...",
-      "Verificando políticas de privacidade...",
-      "Analisando cookies e tracking...",
-      "Gerando relatório final..."
-    ];
-
-    for (let i = 0; i < steps.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      setScanProgress((i + 1) * (100 / steps.length));
+    // Validate URL format
+    try {
+      new URL(url.startsWith('http') ? url : `https://${url}`);
+    } catch {
+      toast({
+        title: "URL inválida",
+        description: "Digite uma URL válida (ex: https://exemplo.com)",
+        variant: "destructive",
+      });
+      return;
     }
 
-    // Mock scan results
-    setScanResults({
-      url: url,
-      scanDate: new Date().toISOString(),
-      overallScore: 67,
-      issues: [
-        {
-          severity: "critical",
-          type: "data_collection",
-          title: "CPF coletado sem consentimento explícito",
-          description: "Formulário de cadastro coleta CPF sem checkbox de consentimento LGPD",
-          location: "/cadastro - Formulário de registro",
-          recommendation: "Adicionar checkbox de consentimento antes da coleta de CPF"
-        },
-        {
-          severity: "warning",
-          type: "privacy_policy",
-          title: "Política de privacidade desatualizada",
-          description: "Documento não menciona cookies de terceiros utilizados no site",
-          location: "/privacidade",
-          recommendation: "Atualizar política incluindo todos os cookies e ferramentas de tracking"
-        },
-        {
-          severity: "info",
-          type: "data_retention",
-          title: "Período de retenção não especificado",
-          description: "Não há informação sobre quanto tempo os dados serão armazenados",
-          location: "Geral",
-          recommendation: "Definir e comunicar períodos de retenção de dados"
-        }
-      ],
-      dataTypes: [
-        { type: "Email", count: 3, locations: ["Newsletter", "Contato", "Cadastro"] },
-        { type: "CPF", count: 1, locations: ["Cadastro"] },
-        { type: "Telefone", count: 2, locations: ["Contato", "Suporte"] },
-        { type: "Nome completo", count: 4, locations: ["Newsletter", "Contato", "Cadastro", "Comentários"] }
-      ]
-    });
+    setIsScanning(true);
+    setScanProgress(0);
+    setScanProgressMessage("Iniciando análise...");
+    setScanResults(null);
 
-    setIsScanning(false);
-    
-    toast({
-      title: "Scan concluído!",
-      description: "Vulnerabilidades LGPD detectadas. Veja o relatório completo abaixo.",
-    });
+    try {
+      const fullUrl = url.startsWith('http') ? url : `https://${url}`;
+      
+      const results = await LGPDAnalyzer.analyzeSite(fullUrl, (progress, message) => {
+        setScanProgress(progress);
+        setScanProgressMessage(message);
+      });
+
+      setScanResults(results);
+      
+      toast({
+        title: "Scan concluído!",
+        description: `${results.issues.length} vulnerabilidades detectadas. Score: ${results.overallScore}/100`,
+      });
+    } catch (error) {
+      console.error('Erro durante o scan:', error);
+      toast({
+        title: "Erro no scan",
+        description: "Não foi possível analisar o site. Tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   const getSeverityColor = (severity: string) => {
@@ -119,9 +99,34 @@ const Scan = () => {
     switch (severity) {
       case "critical": return <AlertTriangle className="h-4 w-4" />;
       case "warning": return <AlertTriangle className="h-4 w-4" />;
-      case "info": return <CheckCircle className="h-4 w-4" />;
+      case "info": return <Info className="h-4 w-4" />;
       default: return <CheckCircle className="h-4 w-4" />;
     }
+  };
+
+  const copyReport = () => {
+    if (!scanResults) return;
+    
+    const report = `Relatório LGPD - ${scanResults.url}
+Data: ${new Date(scanResults.scanDate).toLocaleDateString()}
+Score: ${scanResults.overallScore}/100
+
+Vulnerabilidades encontradas:
+${scanResults.issues.map(issue => 
+  `- ${issue.title} (${issue.severity}): ${issue.description}`
+).join('\n')}
+
+Dados pessoais detectados:
+${scanResults.dataTypes.map(data => 
+  `- ${data.type}: ${data.count} ocorrências`
+).join('\n')}
+`;
+
+    navigator.clipboard.writeText(report);
+    toast({
+      title: "Relatório copiado!",
+      description: "O relatório foi copiado para a área de transferência",
+    });
   };
 
   return (
@@ -183,7 +188,7 @@ const Scan = () => {
             {isScanning && (
               <div className="mt-4">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm text-gray-600">Progresso do scan</span>
+                  <span className="text-sm text-gray-600">{scanProgressMessage}</span>
                   <span className="text-sm font-medium">{Math.round(scanProgress)}%</span>
                 </div>
                 <Progress value={scanProgress} className="h-2" />
@@ -203,7 +208,7 @@ const Scan = () => {
                     <Globe className="h-6 w-6 text-blue-600" />
                     Resultado do Scan
                   </CardTitle>
-                  <Badge variant={scanResults.overallScore >= 80 ? "default" : "destructive"}>
+                  <Badge variant={scanResults.overallScore >= 80 ? "default" : scanResults.overallScore >= 60 ? "secondary" : "destructive"}>
                     Score: {scanResults.overallScore}/100
                   </Badge>
                 </div>
@@ -212,26 +217,26 @@ const Scan = () => {
                 <div className="grid md:grid-cols-2 gap-6">
                   <div>
                     <h4 className="font-semibold mb-2">URL Escaneada</h4>
-                    <p className="text-sm text-gray-600 mb-4">{scanResults.url}</p>
+                    <p className="text-sm text-gray-600 mb-4 break-all">{scanResults.url}</p>
                     
                     <h4 className="font-semibold mb-2">Resumo de Issues</h4>
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-sm">Críticos</span>
                         <Badge variant="destructive">
-                          {scanResults.issues.filter((i: any) => i.severity === "critical").length}
+                          {scanResults.issues.filter(i => i.severity === "critical").length}
                         </Badge>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm">Atenção</span>
                         <Badge variant="secondary">
-                          {scanResults.issues.filter((i: any) => i.severity === "warning").length}
+                          {scanResults.issues.filter(i => i.severity === "warning").length}
                         </Badge>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm">Informativos</span>
                         <Badge variant="outline">
-                          {scanResults.issues.filter((i: any) => i.severity === "info").length}
+                          {scanResults.issues.filter(i => i.severity === "info").length}
                         </Badge>
                       </div>
                     </div>
@@ -240,12 +245,20 @@ const Scan = () => {
                   <div>
                     <h4 className="font-semibold mb-2">Tipos de Dados Encontrados</h4>
                     <div className="space-y-2">
-                      {scanResults.dataTypes.map((dataType: any, index: number) => (
+                      {scanResults.dataTypes.map((dataType, index) => (
                         <div key={index} className="flex items-center justify-between">
                           <span className="text-sm">{dataType.type}</span>
-                          <Badge variant="outline">{dataType.count} campos</Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline">{dataType.count} campos</Badge>
+                            <Badge variant={dataType.severity === 'high' ? 'destructive' : dataType.severity === 'medium' ? 'secondary' : 'outline'} className="text-xs">
+                              {dataType.severity}
+                            </Badge>
+                          </div>
                         </div>
                       ))}
+                      {scanResults.dataTypes.length === 0 && (
+                        <p className="text-sm text-gray-500">Nenhum dado pessoal detectado automaticamente</p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -253,39 +266,41 @@ const Scan = () => {
             </Card>
 
             {/* Issues Detail */}
-            <Card className="bg-white/80 backdrop-blur-sm">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <AlertTriangle className="h-6 w-6 text-red-600" />
-                  Vulnerabilidades Detectadas
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {scanResults.issues.map((issue: any, index: number) => (
-                    <div key={index} className={`p-4 rounded-lg border-l-4 ${getSeverityColor(issue.severity)}`}>
-                      <div className="flex items-start justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          {getSeverityIcon(issue.severity)}
-                          <h4 className="font-semibold">{issue.title}</h4>
+            {scanResults.issues.length > 0 && (
+              <Card className="bg-white/80 backdrop-blur-sm">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <AlertTriangle className="h-6 w-6 text-red-600" />
+                    Vulnerabilidades Detectadas
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-4">
+                    {scanResults.issues.map((issue, index) => (
+                      <div key={index} className={`p-4 rounded-lg border-l-4 ${getSeverityColor(issue.severity)}`}>
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            {getSeverityIcon(issue.severity)}
+                            <h4 className="font-semibold">{issue.title}</h4>
+                          </div>
+                          <Badge variant="outline" className="capitalize">
+                            {issue.severity}
+                          </Badge>
                         </div>
-                        <Badge variant="outline" className="capitalize">
-                          {issue.severity}
-                        </Badge>
+                        <p className="text-sm text-gray-600 mb-2">{issue.description}</p>
+                        <p className="text-xs text-gray-500 mb-3">
+                          <strong>Local:</strong> {issue.location}
+                        </p>
+                        <div className="bg-white/50 p-3 rounded border">
+                          <p className="text-xs font-medium text-gray-700 mb-1">Recomendação:</p>
+                          <p className="text-xs text-gray-600">{issue.recommendation}</p>
+                        </div>
                       </div>
-                      <p className="text-sm text-gray-600 mb-2">{issue.description}</p>
-                      <p className="text-xs text-gray-500 mb-3">
-                        <strong>Local:</strong> {issue.location}
-                      </p>
-                      <div className="bg-white/50 p-3 rounded border">
-                        <p className="text-xs font-medium text-gray-700 mb-1">Recomendação:</p>
-                        <p className="text-xs text-gray-600">{issue.recommendation}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Actions */}
             <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
@@ -300,7 +315,7 @@ const Scan = () => {
                       <Eye className="h-4 w-4 mr-2" />
                       Ver Dashboard
                     </Button>
-                    <Button variant="outline">
+                    <Button variant="outline" onClick={copyReport}>
                       <Copy className="h-4 w-4 mr-2" />
                       Copiar Relatório
                     </Button>
